@@ -1,0 +1,78 @@
+name: Build OpenWrt Firmware
+
+# 控制工作流何时触发
+on:
+  # 允许在GitHub页面上手动触发
+  workflow_dispatch:
+  # 当推送代码到默认分支（如main/master）时触发
+  push:
+    branches: [ main, master ]
+  # 可以取消下面几行的注释，设置为定时编译（例如每周一凌晨3点）
+  # schedule:
+  #   - cron: '0 3 * * 1'
+
+# 环境变量，方便集中修改
+env:
+  # 选择固件源码，这里使用ImmortalWrt的稳定分支
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-21.02
+  # 设置你的设备参数（非常重要！请根据你的路由器修改）
+  TARGET: mediatek
+  SUBTARGET: mt7981
+  DEVICE: cmcc_rax3000m
+
+jobs:
+  build:
+    # 使用GitHub提供的最新Ubuntu虚拟机环境
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤1：获取仓库源码
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 步骤2：设置编译环境（缓存依赖，大幅加速后续编译）
+      - name: Setup Build Environment with Cache
+        uses: actions/cache@v3
+        with:
+          path: openwrt/.cache
+          key: ${{ runner.os }}-openwrt-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ env.DEVICE }}-deps
+          restore-keys: |
+            ${{ runner.os }}-openwrt-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ env.DEVICE }}-deps
+
+      # 步骤3：克隆OpenWrt/ImmortalWrt源代码
+      - name: Clone Source Code
+        run: |
+          git clone -b $REPO_BRANCH $REPO_URL openwrt
+          cd openwrt
+
+      # 步骤4：更新并安装Feeds（扩展软件包源）
+      - name: Update Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # 步骤5：应用自定义配置（例如预选PassWall2等插件）
+      - name: Apply Custom Configuration
+        run: |
+          cd openwrt
+          # 这里可以放置你的.config文件内容，或使用脚本配置
+          # 示例：启用PassWall2（取消下一行的注释来启用）
+          # echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
+          make defconfig
+
+      # 步骤6：开始编译固件（使用多核并行编译）
+      - name: Build Firmware
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s
+
+      # 步骤7：上传编译好的固件作为工作流制品
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.DEVICE }}-firmware
+          path: openwrt/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/
+          # 保留天数设置为7天
+          retention-days: 7
